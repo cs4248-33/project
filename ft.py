@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import warnings
+import random
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -27,6 +28,17 @@ import datasets
 import evaluate
 import numpy as np
 from datasets import load_dataset
+
+import nltk
+from nltk import RecursiveDescentParser
+from nltk.tokenize import RegexpTokenizer
+from nltk.corpus import treebank
+from nltk.tokenize import word_tokenize
+
+import benepar, spacy
+
+import jieba
+import jieba.posseg as pseg
 
 import transformers
 from transformers import (
@@ -53,7 +65,7 @@ from transformers.utils.versions import require_version
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.40.0.dev0")
+check_min_version("4.39.3")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/translation/requirements.txt")
 
@@ -495,6 +507,10 @@ def main():
     def preprocess_function(examples):
         inputs = [ex[source_lang] for ex in examples["translation"]]
         targets = [ex[target_lang] for ex in examples["translation"]]
+
+        constituency_sub_augmentation(inputs, targets, ['the'])
+
+        return
         inputs = [prefix + inp for inp in inputs]
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
@@ -510,6 +526,56 @@ def main():
 
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
+    
+    def constituency_sub_augmentation(inputs, targets, ooc_words, K=50):
+        # def extract_constituents(parse_tree):
+        #     constituents = []
+        #     for subtree in parse_tree.subtrees():
+        #         if subtree.height() > 1:  # Ignore pre-terminal nodes
+        #             label = subtree.label()
+        #             words = subtree.leaves()
+        #             constituents.append((label, ' '.join(words)))
+        #     return constituents
+
+        benepar.download('benepar_en3')
+
+        nlp = spacy.load('en_core_web_md')
+        nlp_en = spacy.load('en_core_web_md')
+        nlp_en.add_pipe('benepar', config={'model': 'benepar_en3'})
+
+        selected_indices = set()
+        result = {}
+
+        for word in ooc_words:
+            result[word] = []
+            ooc_word = nlp(word)[0]
+            print("OOC: ", ooc_word.tag_)
+
+            # Randomly select K sentences from training set to augment
+            while len(selected_indices) < K:
+                random_index = random.randint(0, len(inputs) - 1)
+                if random_index in selected_indices:
+                    continue
+                
+                selected_indices.add(random_index)
+
+                input_sentence = inputs[random_index]
+                target_sentence = targets[random_index]
+
+                en_parsed = nlp_en(input_sentence)
+                en_parsed = list(en_parsed.sents)[0]
+
+                sorted_constituents = []
+
+                for i in sorted(en_parsed._.constituents, key=lambda x: len(x), reverse=True):
+                    print(len(selected_indices), ":", i)
+
+                # if ooc_word.tag_ in en_parsed._.constituents:
+                #     print("YESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSs!!!!!!!!!!!!!!!!!!!!!!")
+
+                print(input_sentence, en_parsed._.parse_string)
+            
+            break
 
     if training_args.do_train:
         if "train" not in raw_datasets:
