@@ -1,0 +1,13 @@
+{
+    "predict_bleu": 17.7251,
+    "predict_example": "\u53bb\u5e74\u6211\u5c55\u793a\u4e86\u8fd9\u4e24\u5f20\u5e7b\u706f\u7247, \u5c55\u793a\u4e86\u5317\u6781\u7684\u51b0\u76d6 \u5728\u8fc7\u53bb\u4e09\u767e\u4e07\u5e74\u91cc \u5927\u90e8\u5206\u65f6\u95f4\u662f \u4f4e48\u4e2a\u5dde\u7684\u5927\u5c0f, \u7f29\u5c0f\u4e8640%\u3002 | ['\u53bb\u5e74\u6211\u7ed9\u5404\u4f4d\u5c55\u793a\u4e86\u4e24\u4e2a \u5173\u4e8e\u5317\u6781\u51b0\u5e3d\u7684\u6f14\u793a \u5728\u8fc7\u53bb\u4e09\u767e\u4e07\u5e74\u4e2d \u5176\u9762\u79ef\u7531\u76f8\u5f53\u4e8e\u7f8e\u56fd\u5357\u65b948\u5dde\u9762\u79ef\u603b\u548c \u7f29\u51cf\u4e8640%']",
+    "predict_gen_len": 21.392,
+    "predict_loss": 3.1401584148406982,
+    "predict_rouge1": 0.0916,
+    "predict_rouge2": 0.021,
+    "predict_rougeL": 0.0911,
+    "predict_runtime": 183.9647,
+    "predict_samples": 879,
+    "predict_samples_per_second": 4.778,
+    "predict_steps_per_second": 0.299
+}

@@ -3,3 +3,4 @@
 data/*.bin
 data/*.txt
 data/*.csv
+**/model.safetensors
