@@ -29,16 +29,10 @@ import evaluate
 import numpy as np
 from datasets import load_dataset
 
-import nltk
-from nltk import RecursiveDescentParser
-from nltk.tokenize import RegexpTokenizer
-from nltk.corpus import treebank
-from nltk.tokenize import word_tokenize
+from nltk import ParentedTree
 
-import benepar, spacy
-
-import jieba
-import jieba.posseg as pseg
+import spacy
+import benepar
 
 import transformers
 from transformers import (
@@ -458,6 +452,13 @@ def main():
     else:
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
+    
+    # For constituency substitution
+    benepar.download('benepar_en3')
+
+    nlp = spacy.load('en_core_web_md')
+    nlp_en = spacy.load('en_core_web_md')
+    nlp_en.add_pipe('benepar', config={'model': 'benepar_en3'})
 
     # For translation we set the codes of our source and target languages (only useful for mBART, the others will
     # ignore those attributes).
@@ -504,13 +505,13 @@ def main():
             f"`{model.__class__.__name__}`. This will lead to loss being calculated twice and will take up more memory"
         )
 
-    def preprocess_function(examples):
+    def preprocess_function(examples, augment=False):
         inputs = [ex[source_lang] for ex in examples["translation"]]
         targets = [ex[target_lang] for ex in examples["translation"]]
 
-        constituency_sub_augmentation(inputs, targets, ['the'])
+        if augment:
+            constituency_sub_augmentation(inputs, ['cat'])
 
-        return
         inputs = [prefix + inp for inp in inputs]
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
@@ -527,55 +528,102 @@ def main():
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
     
-    def constituency_sub_augmentation(inputs, targets, ooc_words, K=50):
-        # def extract_constituents(parse_tree):
-        #     constituents = []
-        #     for subtree in parse_tree.subtrees():
-        #         if subtree.height() > 1:  # Ignore pre-terminal nodes
-        #             label = subtree.label()
-        #             words = subtree.leaves()
-        #             constituents.append((label, ' '.join(words)))
-        #     return constituents
-
-        benepar.download('benepar_en3')
-
-        nlp = spacy.load('en_core_web_md')
-        nlp_en = spacy.load('en_core_web_md')
-        nlp_en.add_pipe('benepar', config={'model': 'benepar_en3'})
-
-        selected_indices = set()
-        result = {}
+    def constituency_sub_augmentation(inputs, ooc_words, K=50):
+        # Key: Ordered list of POS tags that uniquely identify a constituent
+        # Value: List of tuple(ParentedTrees, index of constituent) that contain the constituent
+        swap_tracker = {}
 
         for word in ooc_words:
-            result[word] = []
-            ooc_word = nlp(word)[0]
-            print("OOC: ", ooc_word.tag_)
+            selected_indices = set()
+            augmented_sentences = []
 
-            # Randomly select K sentences from training set to augment
+            ooc_word = nlp(word)[0] # POS tag: ooc_word.tag_, text: ooc_word.text
+
+            # Randomly select max K sentences from training set to augment
             while len(selected_indices) < K:
                 random_index = random.randint(0, len(inputs) - 1)
                 if random_index in selected_indices:
+                    print("[const_aug]: skipping due to index collision")
                     continue
-                
-                selected_indices.add(random_index)
 
                 input_sentence = inputs[random_index]
-                target_sentence = targets[random_index]
 
-                en_parsed = nlp_en(input_sentence)
-                en_parsed = list(en_parsed.sents)[0]
+                has_match = False
+                parse_tree = None
 
-                sorted_constituents = []
+                # Benepar might encounter errors with odd sentences that contain odd
+                # punctuations etc. In such cases, we just skip them and pick the next random
+                # sentence.
+                try:
+                    en_parsed = nlp_en(input_sentence)
+                    en_parsed = list(en_parsed.sents)[0]
+                    parse_tree = ParentedTree.fromstring('(' + en_parsed._.parse_string + ')')
+                except:
+                    print("[const_aug]: skipping benepar error")
+                    continue
 
-                for i in sorted(en_parsed._.constituents, key=lambda x: len(x), reverse=True):
-                    print(len(selected_indices), ":", i)
+                # We identify the smallest possible constituents (height >= 3) that have 2-5 words
+                for s in parse_tree.subtrees(lambda t: 3 <= t.height() <= 4 and len(t.leaves()) >= 2 and len(t.leaves()) <= 5):
+                    # Check if the constituent contains a word with the same POS as our ooc_word.
+                    # Add the ParentedTree to swap_tracker if true.
+                    for i, (_, tag) in enumerate(s.pos()):
+                        if ooc_word.tag_ != tag:
+                            continue
 
-                # if ooc_word.tag_ in en_parsed._.constituents:
-                #     print("YESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSs!!!!!!!!!!!!!!!!!!!!!!")
+                        has_match = True
+                        key = tuple(t[1] for t in s.pos())
 
-                print(input_sentence, en_parsed._.parse_string)
+                        # Swap OOC word in! We do a deep copy just in case.
+                        s_copy = s.copy(deep=True)
+                        for ss in s_copy.subtrees(lambda t: t.height() == 2):
+                            if ss.label() == tag:
+                                ss[0] = ooc_word.text
+
+                        if key in swap_tracker:
+                            swap_tracker[key].append((parse_tree, s_copy))
+                        else:
+                            swap_tracker[key] = [(parse_tree, s_copy)]
+
+                        break
+                    
+                    if has_match:
+                        break
+
+                if has_match:
+                    selected_indices.add(random_index)
+                    # print(f"[const_aug]: {len(selected_indices)}/{K} chosen for ({ooc_word.tag_}, {ooc_word.text})")
             
-            break
+            # Drop those constituents with only 1 ParentedTree
+            swap_tracker = {key: value for key, value in swap_tracker.items() if len(value) > 1}
+
+            # Mix and match!
+            for key, value in swap_tracker.items():
+                if len(value) == 1:
+                    continue
+                
+                for curr_id, (_, curr_sub_pt) in enumerate(value):
+                    for match_id, (match_pt, _) in enumerate(value):
+                        if curr_id == match_id:
+                            continue
+
+                        joined_words = ' '.join(match_pt.leaves())
+                        joined_replacement = ' '.join(curr_sub_pt.leaves())
+
+                        replace = []
+                        
+                        # Get all subtrees that has the corresponding constituent to be replaced
+                        for s in match_pt.subtrees(lambda t: tuple(tag[1] for tag in t.pos()) == key):
+                            replace.append(' '.join(s.leaves()))
+                        
+                        for i in replace:
+                            joined_words = joined_words.replace(i, joined_replacement)
+
+                        augmented_sentences.append(joined_words)
+            
+            # Write to file
+            with open('./augmented.txt', 'a') as file:
+                for string in augmented_sentences:
+                    file.write(string + '\n')
 
     if training_args.do_train:
         if "train" not in raw_datasets:
@@ -586,8 +634,12 @@ def main():
             train_dataset = train_dataset.select(range(max_train_samples))
         with training_args.main_process_first(desc="train dataset map pre-processing"):
             train_dataset = train_dataset.map(
-                preprocess_function,
+                lambda examples: preprocess_function(examples, augment=True),
                 batched=True,
+                batch_size=25000, # This can be changed, but note that for constituency substituion,
+                                  # we are picking K random sentences in each batch.
+                                  # The smaller the batch_size, the more batches we have and hence
+                                  # the more sentences picked.
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
