@@ -305,6 +305,8 @@ def token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.7):
             augmented_sentences.append(augmented_sentence)
             selected_indices.add(random_index)
 
+    return augmented_sentences
+
 def get_synonyms(word, pos, threshold):
     synonyms = []
     for syn in wordnet.synsets(word):
