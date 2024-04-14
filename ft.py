@@ -25,9 +25,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import datasets
+from datasets import Dataset
+from datasets import load_dataset, concatenate_datasets
 import evaluate
 import numpy as np
-from datasets import load_dataset
 
 from nltk import ParentedTree
 
@@ -393,6 +394,10 @@ def main():
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading.
 
+    # Create the directory if it doesn't exist
+    if not os.path.exists(training_args.output_dir):
+        os.makedirs(training_args.output_dir)
+
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -621,7 +626,7 @@ def main():
                         augmented_sentences.append(joined_words)
             
             # Write to file
-            with open('./augmented.txt', 'a') as file:
+            with open(f'{training_args.output_dir}/augmented.txt', 'a') as file:
                 for string in augmented_sentences:
                     file.write(string + '\n')
 
@@ -810,6 +815,151 @@ def main():
                 with open(output_prediction_file, "w", encoding="utf-8") as writer:
                     writer.write("\n".join(predictions))
 
+    # Use trained model to predict augmented sentences
+    def preprocess_aug_function(dataset):
+        inputs = [prefix + inp for inp in dataset['en']]
+        model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
+
+        return model_inputs
+    
+    augmented_dataset = load_dataset("text", data_files=f"{training_args.output_dir}/augmented.txt")
+    augmented_dataset = augmented_dataset.rename_column("text", "en")['train']
+
+    with training_args.main_process_first(desc="augmented dataset map pre-processing"):
+        processed_augmented_dataset = augmented_dataset.map(
+            preprocess_aug_function,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=[source_lang],
+            desc="Running tokenizer on augmented dataset",
+        )
+
+    # Using trained model to predict our augmented data
+    predict_results = trainer.predict(
+        processed_augmented_dataset, metric_key_prefix="predict", max_length=max_length, num_beams=num_beams
+    )
+    predictions = predict_results.predictions
+    predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
+    predictions = tokenizer.batch_decode(
+        predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
+    )
+    predictions = [pred.strip() for pred in predictions]
+
+    combined_data = {"translation": [{"en": en, "zh": zh} for en, zh in zip(augmented_dataset["en"], predictions)]}    
+    augmented_dataset = Dataset.from_dict(combined_data)
+
+    # This is our new dataset with the augmented data and its corresponding translations
+    # retrieved from the trained data.
+    # We will then perform retraining on this combined dataset. 
+    train_dataset = concatenate_datasets([raw_datasets["train"], augmented_dataset])
+
+    if data_args.max_train_samples is not None:
+        max_train_samples = min(len(train_dataset), data_args.max_train_samples)
+        train_dataset = train_dataset.select(range(max_train_samples))
+    with training_args.main_process_first(desc="combined train dataset map pre-processing"):
+        train_dataset = train_dataset.map(
+            preprocess_function,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+            desc="Running tokenizer on combined train dataset",
+        )
+    
+    training_args.output_dir = f"{training_args.output_dir}-const-sub"
+
+    # Detecting last checkpoint for retraining.
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+    # Initialize our actual Trainer
+    trainer = Seq2SeqTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset if training_args.do_train else None,
+        eval_dataset=eval_dataset if training_args.do_eval else None,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics 
+    )
+
+    # Training
+    if training_args.do_train:
+        checkpoint = None
+        if training_args.resume_from_checkpoint is not None:
+            checkpoint = training_args.resume_from_checkpoint
+        elif last_checkpoint is not None:
+            checkpoint = last_checkpoint
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        trainer.save_model()  # Saves the tokenizer too for easy upload
+
+        metrics = train_result.metrics
+        max_train_samples = (
+            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+        )
+        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+    # Evaluation
+    results = {}
+    max_length = (
+        training_args.generation_max_length
+        if training_args.generation_max_length is not None
+        else data_args.val_max_target_length
+    )
+    num_beams = data_args.num_beams if data_args.num_beams is not None else training_args.generation_num_beams
+    if training_args.do_eval:
+        logger.info("*** Evaluate ***")
+
+        metrics = trainer.evaluate(max_length=max_length, num_beams=num_beams, metric_key_prefix="eval")
+        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
+        metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
+
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    if training_args.do_predict:
+        logger.info("*** Predict ***")
+
+        predict_results = trainer.predict(
+            predict_dataset, metric_key_prefix="predict", max_length=max_length, num_beams=num_beams
+        )
+        metrics = predict_results.metrics
+        max_predict_samples = (
+            data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
+        )
+        metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+        if trainer.is_world_process_zero():
+            if training_args.predict_with_generate:
+                predictions = predict_results.predictions
+                predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
+                predictions = tokenizer.batch_decode(
+                    predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
+                )
+                predictions = [pred.strip() for pred in predictions]
+                output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
+                with open(output_prediction_file, "w", encoding="utf-8") as writer:
+                    writer.write("\n".join(predictions))
+
+    # Wrap up
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "translation"}
     if data_args.dataset_name is not None:
         kwargs["dataset_tags"] = data_args.dataset_name
