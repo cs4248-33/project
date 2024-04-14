@@ -28,6 +28,11 @@ import evaluate
 import numpy as np
 from datasets import load_dataset
 
+import random
+from nltk.corpus import wordnet
+from nltk import pos_tag
+from nltk.tokenize import word_tokenize
+
 import transformers
 from transformers import (
     AutoConfig,
@@ -264,6 +269,60 @@ class DataTrainingArguments:
         if self.val_max_target_length is None:
             self.val_max_target_length = self.max_target_length
 
+def token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.7):
+    augmented_sentences = []
+
+    for ooc_word in ooc_words:
+        selected_indices = set()
+
+        # Unpack ooc_word tuple
+        ooc_word_text, ooc_word_pos = ooc_word
+
+        # Randomly select max K sentences from inputs to augment
+        while len(selected_indices) < K:
+            random_index = random.randint(0, len(inputs) - 1)
+            if random_index in selected_indices:
+                print("[token_sub_aug]: skipping due to index collision")
+                continue
+
+            input_sentence = inputs[random_index]
+
+            # Tokenize input sentence
+            words = word_tokenize(input_sentence)
+
+            # Perform POS tagging
+            tagged_words = pos_tag(words)
+
+            # Find words with the same POS tag as ooc_word
+            same_pos_words = [word for word, pos in tagged_words if pos == ooc_word_pos]
+
+            # Perform token substitution
+            augmented_sentence = input_sentence
+            for word in same_pos_words:
+                if are_synonyms(word, ooc_word_text, ooc_word_pos, synonym_threshold):
+                    augmented_sentence = augmented_sentence.replace(word, ooc_word_text)
+
+            augmented_sentences.append(augmented_sentence)
+            selected_indices.add(random_index)
+
+def get_synonyms(word, pos, threshold):
+    synonyms = []
+    for syn in wordnet.synsets(word):
+        for lemma in syn.lemmas():
+            if lemma.name() != word and lemma.synset().pos() == pos:
+                similarity = syn.wup_similarity(lemma.synset())
+                if similarity is not None and similarity >= threshold:
+                    synonyms.append(lemma.name())
+    return synonyms
+
+def are_synonyms(word1, word2, pos, threshold):
+    for syn1 in wordnet.synsets(word1):
+        for syn2 in wordnet.synsets(word2):
+            if syn1.pos() == pos and syn2.pos() == pos:
+                similarity = syn1.wup_similarity(syn2)
+                if similarity is not None and similarity >= threshold:
+                    return True
+    return False
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
