@@ -271,6 +271,20 @@ class DataTrainingArguments:
         if self.val_max_target_length is None:
             self.val_max_target_length = self.max_target_length
 
+# simple conversion to WordNet POS tags
+def get_wn_pos(pos):
+    first_char = pos[0].lower()
+    if first_char == 'n':
+        return 'n'  # Noun
+    elif first_char == 'v':
+        return 'v'  # Verb
+    elif first_char == 'j':
+        return 'a'  # Adjective
+    elif first_char == 'r':
+        return 'r'  # Adverb
+    else:
+        return None
+
 # unused, just for testing
 def get_synonyms(word, pos, threshold):
     synonyms = []
@@ -543,7 +557,7 @@ def main():
     # assume ooc_words is a list of words
     # K is the maximum number of sentences that each ooc word will augment.
     # i.e. if K=50 and we have 50 ooc words, we can augment up to 50x50 sentences
-    def token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.7):
+    def token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.6):
         nlp = spacy.load('en_core_web_md')
 
         augmented_sentences = []
@@ -578,7 +592,7 @@ def main():
                 augmented_sentence = input_sentence
                 is_augmented = False
                 for word in same_pos_words:
-                    if are_synonyms(word, ooc_word_struct.text, ooc_word_struct.tag_, synonym_threshold):
+                    if are_synonyms(word, ooc_word_struct.text, get_wn_pos(ooc_word_struct.tag_), synonym_threshold):
                         augmented_sentence = augmented_sentence.replace(word, ooc_word_struct.text)
                         is_augmented = True
 
