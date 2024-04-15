@@ -279,7 +279,7 @@ def get_wn_pos(pos):
     elif first_char == 'v':
         return 'v'  # Verb
     elif first_char == 'j':
-        return 'a'  # Adjective
+        return 'as'  # Adjective
     elif first_char == 'r':
         return 'r'  # Adverb
     else:
@@ -300,7 +300,7 @@ def get_synonyms(word, pos, threshold):
 def are_synonyms(word1, word2, pos, threshold):
     for syn1 in wordnet.synsets(word1):
         for syn2 in wordnet.synsets(word2):
-            if syn1.pos() == pos and syn2.pos() == pos:
+            if syn1.pos() in pos and syn2.pos() in pos:
                 similarity = syn1.wup_similarity(syn2)
                 if similarity is not None and similarity >= threshold:
                     return True
