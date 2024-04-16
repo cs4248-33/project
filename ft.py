@@ -20,20 +20,13 @@ import logging
 import os
 import sys
 import warnings
-import random
 from dataclasses import dataclass, field
 from typing import Optional
 
 import datasets
-from datasets import Dataset
-from datasets import load_dataset, concatenate_datasets
 import evaluate
 import numpy as np
-
-from nltk import ParentedTree
-
-import spacy
-import benepar
+from datasets import load_dataset
 
 import transformers
 from transformers import (
@@ -394,10 +387,6 @@ def main():
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading.
 
-    # Create the directory if it doesn't exist
-    if not os.path.exists(training_args.output_dir):
-        os.makedirs(training_args.output_dir)
-
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -457,13 +446,6 @@ def main():
     else:
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
-    
-    # For constituency substitution
-    benepar.download('benepar_en3')
-
-    nlp = spacy.load('en_core_web_md')
-    nlp_en = spacy.load('en_core_web_md')
-    nlp_en.add_pipe('benepar', config={'model': 'benepar_en3'})
 
     # For translation we set the codes of our source and target languages (only useful for mBART, the others will
     # ignore those attributes).
@@ -510,13 +492,9 @@ def main():
             f"`{model.__class__.__name__}`. This will lead to loss being calculated twice and will take up more memory"
         )
 
-    def preprocess_function(examples, augment=False):
+    def preprocess_function(examples):
         inputs = [ex[source_lang] for ex in examples["translation"]]
         targets = [ex[target_lang] for ex in examples["translation"]]
-
-        if augment:
-            constituency_sub_augmentation(inputs, ['cat'])
-
         inputs = [prefix + inp for inp in inputs]
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
@@ -532,103 +510,6 @@ def main():
 
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
-    
-    def constituency_sub_augmentation(inputs, ooc_words, K=50):
-        # Key: Ordered list of POS tags that uniquely identify a constituent
-        # Value: List of tuple(ParentedTrees, index of constituent) that contain the constituent
-        swap_tracker = {}
-
-        for word in ooc_words:
-            selected_indices = set()
-            augmented_sentences = []
-
-            ooc_word = nlp(word)[0] # POS tag: ooc_word.tag_, text: ooc_word.text
-
-            # Randomly select max K sentences from training set to augment
-            while len(selected_indices) < K:
-                random_index = random.randint(0, len(inputs) - 1)
-                if random_index in selected_indices:
-                    print("[const_aug]: skipping due to index collision")
-                    continue
-
-                input_sentence = inputs[random_index]
-
-                has_match = False
-                parse_tree = None
-
-                # Benepar might encounter errors with odd sentences that contain odd
-                # punctuations etc. In such cases, we just skip them and pick the next random
-                # sentence.
-                try:
-                    en_parsed = nlp_en(input_sentence)
-                    en_parsed = list(en_parsed.sents)[0]
-                    parse_tree = ParentedTree.fromstring('(' + en_parsed._.parse_string + ')')
-                except:
-                    print("[const_aug]: skipping benepar error")
-                    continue
-
-                # We identify the smallest possible constituents (height >= 3) that have 2-5 words
-                for s in parse_tree.subtrees(lambda t: 3 <= t.height() <= 4 and len(t.leaves()) >= 2 and len(t.leaves()) <= 5):
-                    # Check if the constituent contains a word with the same POS as our ooc_word.
-                    # Add the ParentedTree to swap_tracker if true.
-                    for i, (_, tag) in enumerate(s.pos()):
-                        if ooc_word.tag_ != tag:
-                            continue
-
-                        has_match = True
-                        key = tuple(t[1] for t in s.pos())
-
-                        # Swap OOC word in! We do a deep copy just in case.
-                        s_copy = s.copy(deep=True)
-                        for ss in s_copy.subtrees(lambda t: t.height() == 2):
-                            if ss.label() == tag:
-                                ss[0] = ooc_word.text
-
-                        if key in swap_tracker:
-                            swap_tracker[key].append((parse_tree, s_copy))
-                        else:
-                            swap_tracker[key] = [(parse_tree, s_copy)]
-
-                        break
-                    
-                    if has_match:
-                        break
-
-                if has_match:
-                    selected_indices.add(random_index)
-                    # print(f"[const_aug]: {len(selected_indices)}/{K} chosen for ({ooc_word.tag_}, {ooc_word.text})")
-            
-            # Drop those constituents with only 1 ParentedTree
-            swap_tracker = {key: value for key, value in swap_tracker.items() if len(value) > 1}
-
-            # Mix and match!
-            for key, value in swap_tracker.items():
-                if len(value) == 1:
-                    continue
-                
-                for curr_id, (_, curr_sub_pt) in enumerate(value):
-                    for match_id, (match_pt, _) in enumerate(value):
-                        if curr_id == match_id:
-                            continue
-
-                        joined_words = ' '.join(match_pt.leaves())
-                        joined_replacement = ' '.join(curr_sub_pt.leaves())
-
-                        replace = []
-                        
-                        # Get all subtrees that has the corresponding constituent to be replaced
-                        for s in match_pt.subtrees(lambda t: tuple(tag[1] for tag in t.pos()) == key):
-                            replace.append(' '.join(s.leaves()))
-                        
-                        for i in replace:
-                            joined_words = joined_words.replace(i, joined_replacement)
-
-                        augmented_sentences.append(joined_words)
-            
-            # Write to file
-            with open(f'{training_args.output_dir}/augmented.txt', 'a') as file:
-                for string in augmented_sentences:
-                    file.write(string + '\n')
 
     if training_args.do_train:
         if "train" not in raw_datasets:
@@ -639,12 +520,8 @@ def main():
             train_dataset = train_dataset.select(range(max_train_samples))
         with training_args.main_process_first(desc="train dataset map pre-processing"):
             train_dataset = train_dataset.map(
-                lambda examples: preprocess_function(examples, augment=True),
+                preprocess_function,
                 batched=True,
-                batch_size=25000, # This can be changed, but note that for constituency substituion,
-                                  # we are picking K random sentences in each batch.
-                                  # The smaller the batch_size, the more batches we have and hence
-                                  # the more sentences picked.
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -815,151 +692,6 @@ def main():
                 with open(output_prediction_file, "w", encoding="utf-8") as writer:
                     writer.write("\n".join(predictions))
 
-    # Use trained model to predict augmented sentences
-    def preprocess_aug_function(dataset):
-        inputs = [prefix + inp for inp in dataset['en']]
-        model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
-
-        return model_inputs
-    
-    augmented_dataset = load_dataset("text", data_files=f"{training_args.output_dir}/augmented.txt")
-    augmented_dataset = augmented_dataset.rename_column("text", "en")['train']
-
-    with training_args.main_process_first(desc="augmented dataset map pre-processing"):
-        processed_augmented_dataset = augmented_dataset.map(
-            preprocess_aug_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=[source_lang],
-            desc="Running tokenizer on augmented dataset",
-        )
-
-    # Using trained model to predict our augmented data
-    predict_results = trainer.predict(
-        processed_augmented_dataset, metric_key_prefix="predict", max_length=max_length, num_beams=num_beams
-    )
-    predictions = predict_results.predictions
-    predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
-    predictions = tokenizer.batch_decode(
-        predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
-    )
-    predictions = [pred.strip() for pred in predictions]
-
-    combined_data = {"translation": [{"en": en, "zh": zh} for en, zh in zip(augmented_dataset["en"], predictions)]}    
-    augmented_dataset = Dataset.from_dict(combined_data)
-
-    # This is our new dataset with the augmented data and its corresponding translations
-    # retrieved from the trained data.
-    # We will then perform retraining on this combined dataset. 
-    train_dataset = concatenate_datasets([raw_datasets["train"], augmented_dataset])
-
-    if data_args.max_train_samples is not None:
-        max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-        train_dataset = train_dataset.select(range(max_train_samples))
-    with training_args.main_process_first(desc="combined train dataset map pre-processing"):
-        train_dataset = train_dataset.map(
-            preprocess_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-            desc="Running tokenizer on combined train dataset",
-        )
-    
-    training_args.output_dir = f"{training_args.output_dir}-const-sub"
-
-    # Detecting last checkpoint for retraining.
-    last_checkpoint = None
-    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
-        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-            logger.info(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
-
-    # Initialize our actual Trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics 
-    )
-
-    # Training
-    if training_args.do_train:
-        checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
-
-        metrics = train_result.metrics
-        max_train_samples = (
-            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-        )
-        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-
-    # Evaluation
-    results = {}
-    max_length = (
-        training_args.generation_max_length
-        if training_args.generation_max_length is not None
-        else data_args.val_max_target_length
-    )
-    num_beams = data_args.num_beams if data_args.num_beams is not None else training_args.generation_num_beams
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-
-        metrics = trainer.evaluate(max_length=max_length, num_beams=num_beams, metric_key_prefix="eval")
-        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
-        metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
-
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
-
-    if training_args.do_predict:
-        logger.info("*** Predict ***")
-
-        predict_results = trainer.predict(
-            predict_dataset, metric_key_prefix="predict", max_length=max_length, num_beams=num_beams
-        )
-        metrics = predict_results.metrics
-        max_predict_samples = (
-            data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
-        )
-        metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
-
-        trainer.log_metrics("predict", metrics)
-        trainer.save_metrics("predict", metrics)
-
-        if trainer.is_world_process_zero():
-            if training_args.predict_with_generate:
-                predictions = predict_results.predictions
-                predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
-                predictions = tokenizer.batch_decode(
-                    predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
-                )
-                predictions = [pred.strip() for pred in predictions]
-                output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
-                with open(output_prediction_file, "w", encoding="utf-8") as writer:
-                    writer.write("\n".join(predictions))
-
-    # Wrap up
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "translation"}
     if data_args.dataset_name is not None:
         kwargs["dataset_tags"] = data_args.dataset_name
