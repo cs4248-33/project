@@ -601,7 +601,7 @@ def main():
                 
                 selected_indices.add(random_index)
 
-        with open(f'{training_args.output_dir}/tokensub.txt', 'w') as file:
+        with open(f'{training_args.output_dir}/tokensub.txt', 'w', encoding='utf-8') as file:
             for sentence in augmented_sentences:
                 file.write(sentence + '\n')
 
