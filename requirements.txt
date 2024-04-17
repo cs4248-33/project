@@ -17,3 +17,5 @@ transformers==4.39.3
 typing-extensions==4.11.0
 spacy==3.7.4
 benepar==0.2.0
+deep-translator==1.11.4
+bllipparser==2021.11.7

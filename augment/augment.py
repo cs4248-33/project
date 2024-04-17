@@ -2,6 +2,7 @@ import os
 import json
 from token_sub import token_substitution
 from const_sub import constituency_sub_augmentation
+from parse_tree_sub import parse_tree_sub_augmentation
 from datasets import load_dataset, concatenate_datasets
 from typing import List, Optional
 
@@ -92,18 +93,20 @@ if __name__ == "__main__":
    
     ### STEP 1: Generate augmented English sentences
     # input_path =  os.path.join(DATA_DIR, "train.json")
-    # output_path = os.path.join(DATA_DIR, "augmented.json")
+    # output_path = os.path.join(DATA_DIR, "parse_tree_augmented.json")
     # ooc_words_path = os.path.join(DATA_DIR, "ooc_words.txt")
 
     # const_sub = lambda inputs, ooc_words: constituency_sub_augmentation(inputs, ooc_words, n_generate=20000)
 
     # token_sub = lambda inputs, ooc_words: token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.6)
 
+    # parse_tree_sub = lambda inputs, ooc_words: parse_tree_sub_augmentation(inputs, ooc_words, K=20)
+
     # augmented_sentences = main(
     #     input_json_path=input_path, 
     #     ooc_words_txt_path=ooc_words_path, 
     #     output_json_path=output_path,
-    #     augment_func=token_sub
+    #     augment_func=parse_tree_sub
     # ) 
     # print(augmented_sentences)
 
@@ -125,9 +128,9 @@ if __name__ == "__main__":
 
     ### STEP 3: Generate concatenated dataset
     # train_json_path = os.path.join(DATA_DIR, "train.json")
-    # augment_json_path = os.path.join(DATA_DIR, "augmented-3.json")
+    # augment_json_path = os.path.join(DATA_DIR, "parse_tree_augmented.json")
     # translations_txt_path = os.path.join(OUTPUT_DIR, "generated_predictions.txt")
-    # concatenated_train_json_path = os.path.join(DATA_DIR, "augmented_train.json")
+    # concatenated_train_json_path = os.path.join(DATA_DIR, "parse_tree_augmented_train.json")
 
     # augmented_dataset = augment_training_data(
     #     train_json_path=train_json_path,
