@@ -1,5 +1,6 @@
 import os
 import json
+from token_sub import token_substitution
 from const_sub import constituency_sub_augmentation
 from datasets import load_dataset, concatenate_datasets
 from typing import List, Optional
@@ -92,14 +93,19 @@ if __name__ == "__main__":
     ### STEP 1: Generate augmented English sentences
     # input_path =  os.path.join(DATA_DIR, "train.json")
     # output_path = os.path.join(DATA_DIR, "augmented.json")
-    # ooc_words_path = os.path.join(DATA_DIR, "ooc_words.json")
+    # ooc_words_path = os.path.join(DATA_DIR, "ooc_words.txt")
+
+    # const_sub = lambda inputs, ooc_words: constituency_sub_augmentation(inputs, ooc_words, n_generate=20000)
+
+    # token_sub = lambda inputs, ooc_words: token_substitution(inputs, ooc_words, K=50, synonym_threshold=0.6)
 
     # augmented_sentences = main(
     #     input_json_path=input_path, 
     #     ooc_words_txt_path=ooc_words_path, 
     #     output_json_path=output_path,
-    #     augment_func=lambda inputs, ooc_words: constituency_sub_augmentation(inputs, ooc_words, n_generate=20000)
+    #     augment_func=token_sub
     # ) 
+    # print(augmented_sentences)
 
     ### STEP 2
     # Run inference to get Chinese translations in generate_predictions.txt

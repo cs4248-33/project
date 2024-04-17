@@ -1,6 +1,6 @@
 import random
 import spacy
-import benepar
+# import benepar
 from nltk import ParentedTree
 from typing import List
 
@@ -9,6 +9,7 @@ def constituency_sub_augmentation(
         ooc_words: List[str], 
         n_generate: int=20000,
     ) -> List[str]:
+    return []
     K = 200
 
     benepar.download('benepar_en3')
