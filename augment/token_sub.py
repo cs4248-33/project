@@ -85,10 +85,15 @@ def token_substitution(
             # Perform token substitution
             augmented_sentence = input_sentence
             is_augmented = False
-            for word in same_pos_words:
-                if are_synonyms(word, ooc_word_struct.text, get_wn_pos(ooc_word_struct.tag_), synonym_threshold):
-                    augmented_sentence = augmented_sentence.replace(word, ooc_word_struct.text)
-                    is_augmented = True
+
+            if synonym_threshold is None or synonym_threshold <= 0:
+                augmented_sentence = augmented_sentence.replace(random.choice(same_pos_words), ooc_word_struct.text, 1)
+                is_augmented = True
+            else:
+                for word in same_pos_words:
+                    if are_synonyms(word, ooc_word_struct.text, get_wn_pos(ooc_word_struct.tag_), synonym_threshold):
+                        augmented_sentence = augmented_sentence.replace(word, ooc_word_struct.text)
+                        is_augmented = True
 
             if is_augmented:
                 augmented_sentences.append(augmented_sentence)
