@@ -1,7 +1,8 @@
+import os
 import json
+from const_sub import constituency_sub_augmentation
 from datasets import load_dataset, concatenate_datasets
 from typing import List, Optional
-from const_sub import constituency_sub_augmentation
 
 def main(
     input_json_path: str, 
@@ -86,10 +87,12 @@ def augment_training_data(
     return new_dataset
 
 if __name__ == "__main__":
+    DATA_DIR = "../data"
+   
     ### STEP 1: Generate augmented English sentences
-    # input_path = "./data/train.json"
-    # output_path = "./data/augmented.json"
-    # ooc_words_path = "./data/ooc_words.txt"
+    # input_path =  os.path.join(DATA_DIR, "train.json")
+    # output_path = os.path.join(DATA_DIR, "augmented.json")
+    # ooc_words_path = os.path.join(DATA_DIR, "ooc_words.json")
 
     # augmented_sentences = main(
     #     input_json_path=input_path, 
@@ -115,10 +118,10 @@ if __name__ == "__main__":
     """
 
     ### STEP 3: Generate concatenated dataset
-    # train_json_path = "./data/train.json"
-    # augment_json_path = "./data/augmented-3.json"
-    # translations_txt_path = "./temp/generated_predictions.txt"
-    # concatenated_train_json_path = "./data/augmented_train.json"
+    # train_json_path = os.path.join(DATA_DIR, "train.json")
+    # augment_json_path = os.path.join(DATA_DIR, "augmented-3.json")
+    # translations_txt_path = os.path.join(OUTPUT_DIR, "generated_predictions.txt")
+    # concatenated_train_json_path = os.path.join(DATA_DIR, "augmented_train.json")
 
     # augmented_dataset = augment_training_data(
     #     train_json_path=train_json_path,
@@ -131,25 +134,25 @@ if __name__ == "__main__":
     ### STEP 4
     # Run model with augmented data
     """
-python ft.py \
-    --model_name_or_path Helsinki-NLP/opus-mt-en-zh \
-    --do_train \
-    --do_eval \
-    --do_predict \
-    --source_lang en \
-    --target_lang zh \
-    --max_source_length 512 \
-    --num_train_epochs 3 \
-    --save_total_limit 2 \
-    --eval_steps 5000 \
-    --logging_steps 5000 \
-    --save_steps 5000 \
-    --evaluation_strategy steps \
-    --train_file ./data/augmented_train.json \
-    --test_file ./data/test.json \
-    --validation_file ./data/validation.json \
-    --output_dir ./const-sub-20k-min-3-words \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
-    --predict_with_generate
+    python ft.py \
+        --model_name_or_path Helsinki-NLP/opus-mt-en-zh \
+        --do_train \
+        --do_eval \
+        --do_predict \
+        --source_lang en \
+        --target_lang zh \
+        --max_source_length 512 \
+        --num_train_epochs 3 \
+        --save_total_limit 2 \
+        --eval_steps 5000 \
+        --logging_steps 5000 \
+        --save_steps 5000 \
+        --evaluation_strategy steps \
+        --train_file ./data/augmented_train.json \
+        --test_file ./data/test.json \
+        --validation_file ./data/validation.json \
+        --output_dir ./const-sub-20k-min-3-words \
+        --per_device_train_batch_size=4 \
+        --per_device_eval_batch_size=4 \
+        --predict_with_generate
     """
