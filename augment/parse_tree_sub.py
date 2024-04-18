@@ -1,3 +1,4 @@
+import uuid
 import random
 import nltk
 import spacy
@@ -6,6 +7,8 @@ from nltk import pos_tag
 from nltk.data import find
 from nltk.tokenize import word_tokenize
 from bllipparser import RerankingParser
+from multiprocessing import cpu_count, Manager
+from multiprocessing.pool import Pool
 
 nltk.download('bllip_wsj_no_aux')
 nltk.download('punkt')
@@ -40,36 +43,59 @@ def get_augment_sentence(words, ooc_word, parser, nlp):
 
     return best_sentence
 
-def parse_tree_sub_augmentation(
+def process_batch(
     inputs: List[str], 
     ooc_words: List[str], 
-    K: int=20
+    n_generate: int=20000
 ) -> List[str]:
+    id = uuid.uuid4()
+
     # Initialize the parser
     model_dir = find('models/bllip_wsj_no_aux').path
     parser = RerankingParser.from_unified_model_dir(model_dir)
     nlp = spacy.load('en_core_web_md')
 
     augmented_sentences = []
-    len_indices = len(inputs)
-    for ooc_word in ooc_words:
-        selected_indices = set()
+    ooc_words_count = len(ooc_words)
+    inputs_count = len(inputs)
 
-        # Randomly select max K sentences from inputs to augment
-        # For each ooc word, K sentences will be augmented
-        while len(selected_indices) < K:
-            random_index = random.randint(0, len_indices - 1)
-            if random_index in selected_indices:
-                print("Skipping due to index collision")
-                continue
+    while len(augmented_sentences) < n_generate:
+        for ooc_word in ooc_words:
+            input_sentence_index = random.randint(0, inputs_count-1)
+            input_sentence = inputs[input_sentence_index]
 
-            source_sentence = inputs[random_index]
-
-            # Tokenize source sentence
-            words = word_tokenize(source_sentence)
+            words = word_tokenize(input_sentence)
             augmented = get_augment_sentence(words, ooc_word, parser, nlp)
+
             if augmented:
                 augmented_sentences.append(augmented)
-                selected_indices.add(random_index)
+                if len(augmented_sentences) % 100 == 0:
+                    print(id, "AUGMENTED", len(augmented_sentences))
+                if len(augmented_sentences) >= n_generate:
+                    return augmented_sentences
 
     return augmented_sentences
+
+def parse_tree_sub_augmentation(
+    inputs: List[str], 
+    ooc_words: List[str], 
+    n_generate: int=20000
+) -> List[str]:
+    batch_size = len(inputs) // 10
+    input_batches = [inputs[i:i+batch_size] for i in range(0, len(inputs), batch_size)]
+    num_threads = len(input_batches)
+    n_generate_per_batch = n_generate // num_threads
+
+    print("batch_size", batch_size)
+    print("num_threads", num_threads)
+    print("n_generate_per_batch", n_generate_per_batch)
+    with Manager() as manager:
+        augmented_sentences = manager.list()
+
+        with Pool() as pool:
+            args = [(batch, ooc_words, n_generate_per_batch) for batch in input_batches]
+            for result in pool.starmap_async(process_batch, args).get():
+                print(result)
+                augmented_sentences.extend(result)
+
+        return list(augmented_sentences)
