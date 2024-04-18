@@ -1,4 +1,4 @@
-# Harmonising the Chinese and English Language with IWSLT 2017 Dataset
+# Data Augmentation Strategies to Combat Rare Words in Machine Translation
 
 By Felix Ong Wei Cong, Kum Wing Ho, Pow Zhi Xiang, Brandon Thio Zhi Kai, Lee Jia Wei
 
@@ -6,23 +6,11 @@ By Felix Ong Wei Cong, Kum Wing Ho, Pow Zhi Xiang, Brandon Thio Zhi Kai, Lee Jia
 
 ## Abstract
 
-The IWSLT 2017 Chinese–English translation project aims to develop a robust sentence-level machine translation model using a large dataset of 230,000 paired sentences for training and 8500 paired sentences for testing.
+Neural Machine Translation (NMT) models have progressed significantly in recent years, especially since the advent of the transformer architecture. However, there is still room for improvement, especially when it comes to translation of sentences that contain rare or out-of-vocabulary (OOV) words. In this paper, we focus on the former issue of rare words, and identify data augmentation as a potential solution. We evaluate various augmentation strategies that preserve syntactic correctness of the generated data, and our findings on custom datasets show that such techniques achieve significant BLEU score gains on sentences containing rare words, whilst also improving accuracy on the original dataset.
 
-We have conducted literature review of sentence-level translation models and techniques, identifying suitable neural network architectures that we can use, taking into account the tradeoffs between performance and compute requirements. We have also researched on preprocessing techniques and appropriate evaluation metrics.
+## Getting Started
 
-## Code
-
-This repo contains the relevant code used to augment the IWSLT 2017 Chinese–English dataset, as well as finetuning and evaluating the MarianMT model for the English-Chinese translation task.
-
-### Supported Architectures
-
-- `BartForConditionalGeneration`
-- `FSMTForConditionalGeneration` (translation only)
-- `MBartForConditionalGeneration`
-- `MarianMTModel`
-- `PegasusForConditionalGeneration`
-- `T5ForConditionalGeneration`
-- `MT5ForConditionalGeneration`
+This repo contains the relevant code used to augment the IWSLT 2017 Chinese–English dataset, as well as finetuning and evaluating the OpusMT model used for the English-Chinese translation task.
 
 `ft.py` is adapted from the [huggingface repo](https://github.com/huggingface/transformers/tree/main/examples/pytorch/translation) for finetuning and evaluating transformer models on translation tasks.
 
@@ -38,9 +26,9 @@ The script supports only custom JSONLINES files, with each line being a dictiona
 }
 ```
 
-Here is an example of a translation fine-tuning with a MarianMT model:
+Here is an example of a translation fine-tuning with a OpusMT model:
 
-```bash opus_finetune.sh
+```bash
 python ft.py \
     --model_name_or_path Helsinki-NLP/opus-mt-en-zh \
     --do_train \
@@ -49,8 +37,8 @@ python ft.py \
     --source_lang en \
     --target_lang zh \
     --max_source_length 512 \
-    --num_train_epochs 1 \
-    --save_total_limit 2 \
+    --num_train_epochs 3 \
+    --save_total_limit 5 \
     --eval_steps 5000 \
     --logging_steps 5000 \
     --save_steps 5000 \
@@ -59,65 +47,8 @@ python ft.py \
     --test_file ./data/test.json \
     --validation_file ./data/validation.json \
     --output_dir ./opus \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
-    --predict_with_generate
-```
-
-MBart and some T5 models require special handling.
-
-T5 models `google-t5/t5-small`, `google-t5/t5-base`, `google-t5/t5-large`, `google-t5/t5-3b` and `google-t5/t5-11b` must use an additional argument: `--source_prefix "translate {source_lang} to {target_lang}"`. For example:
-
-```bash mt5_finetune.sh
-python ft.py \
-    --model_name_or_path google/mt5-small \
-    --do_train \
-    --do_eval \
-    --do_predict \
-    --source_lang en \
-    --target_lang zh \
-    --source_prefix "translate English to Chinese: " \
-    --num_train_epochs 1 \
-    --save_total_limit 2 \
-    --eval_steps 5000 \
-    --logging_steps 5000 \
-    --save_steps 5000 \
-    --evaluation_strategy steps \
-    --train_file ./data/train.json \
-    --test_file ./data/test.json \
-    --validation_file ./data/validation.json \
-    --output_dir ./mt5 \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
-    --predict_with_generate
-```
-
-If you get a terrible BLEU score, make sure that you didn't forget to use the `--source_prefix` argument.
-
-For the aforementioned group of T5 models it's important to remember that if you switch to a different language pair, make sure to adjust the source and target values in all 3 language-specific command line argument: `--source_lang`, `--target_lang` and `--source_prefix`.
-
-MBart models require a different format for `--source_lang` and `--target_lang` values, e.g. instead of `en` it expects `en_XX`, for `zh` it expects `zh_CN`. The full MBart specification for language codes can be found [here](https://huggingface.co/facebook/mbart-large-cc25). For example:
-
-```bash mbart_finetune.sh
-python ft.py \
-    --model_name_or_path facebook/mbart-large-50  \
-    --do_train \
-    --do_eval \
-    --do_predict \
-    --source_lang en_XX \
-    --target_lang zh_CN \
-    --num_train_epochs 1 \
-    --save_total_limit 2 \
-    --eval_steps 5000 \
-    --logging_steps 5000 \
-    --save_steps 5000 \
-    --evaluation_strategy steps \
-    --train_file ./data/train.json \
-    --test_file ./data/test.json \
-    --validation_file ./data/validation.json \
-    --output_dir ./mbart \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
+    --per_device_train_batch_size=64 \
+    --per_device_eval_batch_size=64 \
     --predict_with_generate
 ```
 
@@ -125,7 +56,7 @@ python ft.py \
 
 After training a model, perform inference with the following script, which will generate predictions for the given `<test_file>` and save it to `<output_dir>/generated_predictions.txt:
 
-```bash opus_predict
+```bash
 python ft.py \
     --model_name_or_path ./opus \
     --do_predict \
@@ -135,8 +66,8 @@ python ft.py \
     --test_file ./data/test.json \
     --validation_file ./data/validation.json \
     --output_dir ./opus \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
+    --per_device_train_batch_size=64 \
+    --per_device_eval_batch_size=64 \
     --predict_with_generate
 ```
 
@@ -154,8 +85,8 @@ torchrun \
     --source_lang en \
     --target_lang zh \
     --max_source_length 512 \
-    --num_train_epochs 1 \
-    --save_total_limit 2 \
+    --num_train_epochs 3 \
+    --save_total_limit 5 \
     --eval_steps 5000 \
     --logging_steps 5000 \
     --save_steps 5000 \
@@ -164,7 +95,7 @@ torchrun \
     --test_file ./data/test.json \
     --validation_file ./data/validation.json \
     --output_dir ./opus \
-    --per_device_train_batch_size=4 \
-    --per_device_eval_batch_size=4 \
+    --per_device_train_batch_size=64 \
+    --per_device_eval_batch_size=64 \
     --predict_with_generate
 ```
