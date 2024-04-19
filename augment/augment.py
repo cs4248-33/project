@@ -1,10 +1,11 @@
 import os
 import json
+import argparse
 from token_syn import synonym_substitution
 from token_sub import token_substitution
 from const_sub import constituency_sub_augmentation
 from parse_tree_sub import parse_tree_sub_augmentation
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset
 from typing import List, Optional
 
 def main(
@@ -50,121 +51,63 @@ def main(
  
     return augmented_sentences
 
-def augment_training_data(
-    train_json_path: str, 
-    augment_json_path: str,
-    translations_txt_path: str,
-    concatenated_train_json_path: str,
-):
-    with open(translations_txt_path) as f:
-        zh_translations = [line.lower().strip() for line in f.readlines()]
-
-    train_dataset = load_dataset(
-        "json",
-        data_files=train_json_path,
-        cache_dir=None,
-        token=None,
-    )["train"]
-
-    augemented_dataset = load_dataset(
-        "json",
-        data_files=augment_json_path,
-        cache_dir=None,
-        token=None,
-    )["train"]
-
-    # updated_dataset = small_dataset.map(lambda example, idx: {'sentence2': f'{idx}: ' + example['sentence2']}, with_indices=True)
-    def map_row(row, i):
-        row["translation"]["zh"] = zh_translations[i]
-        return row
-    
-    augemented_dataset = augemented_dataset.map(map_row, with_indices=True)
-
-    new_dataset = concatenate_datasets([augemented_dataset, train_dataset], axis=0)
-    
-    with open(concatenated_train_json_path, mode="w") as f:
-        for row in new_dataset:
-            json.dump(row, f)
-            f.write("\n")
- 
-    return new_dataset
-
 if __name__ == "__main__":
-    DATA_DIR = "../data"
-   
-    ### STEP 1: Generate augmented English sentences
-    input_path =  os.path.join(DATA_DIR, "train.json")
-    output_path = os.path.join(DATA_DIR, "tok_syn_augmented.json")
-    ooc_words_path = os.path.join(DATA_DIR, "ooc_words.txt")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input_json_path", 
+        help="Path to JSONLINES file containing the training data to be augmented",
+        type=str
+    )
+    parser.add_argument(
+        "--ooc_words_txt_path", 
+        help="Path to .txt file containing the list of OOC words, separated by newlines",
+        type=str
+    )
+    parser.add_argument(
+        "--output_json_path", 
+        help="Path to JSONLINES file which will be overwritten with the augmented data",
+        type=str
+    )
+    parser.add_argument(
+        "--strategy", 
+        help="Augmentation strategy to apply. Valid arguments include TOK, TOKSYN, PARSE, CONST",
+        type=str
+    )
+    parser.add_argument(
+        "--n_generate", 
+        help="The maximum number of augmented sentences to generate",
+        type=int
+    )
 
-    const_sub = lambda inputs, ooc_words: constituency_sub_augmentation(inputs, ooc_words, n_generate=20000)
+    args = parser.parse_args()
 
-    token_sub = lambda inputs, ooc_words: token_substitution(inputs, ooc_words, n_generate=20000)
+    assert args.input_json_path is not None
+    assert args.ooc_words_txt_path is not None
+    assert args.output_json_path is not None
+    assert args.strategy is not None 
+    assert args.strategy in ["TOK", "TOKSYN", "PARSE", "CONST"]
+    assert args.n_generate is not None
 
-    token_syn = lambda inputs, ooc_words: synonym_substitution(inputs, ooc_words, n_generate=20000)
+    input_json_path = args.input_json_path
+    ooc_words_txt_path = args.ooc_words_txt_path
+    output_json_path = args.output_json_path
+    strategy = args.strategy
+    n_generate = args.n_generate
 
-    parse_tree_sub = lambda inputs, ooc_words: parse_tree_sub_augmentation(inputs, ooc_words, K=20)
+    if strategy == "TOK":
+        augment_func = lambda inputs, ooc_words: token_substitution(inputs, ooc_words, n_generate)
+    elif strategy == "TOKSYN":
+        augment_func = lambda inputs, ooc_words: synonym_substitution(inputs, ooc_words, n_generate)
+    elif strategy == "CONST":
+        augment_func = lambda inputs, ooc_words: constituency_sub_augmentation(inputs, ooc_words, n_generate)
+    elif strategy == "PARSE":
+        augment_func = lambda inputs, ooc_words: parse_tree_sub_augmentation(inputs, ooc_words, n_generate)
+
+    print(f"Generating up to {n_generate} sentences with {strategy}")
 
     augmented_sentences = main(
-        input_json_path=input_path, 
-        ooc_words_txt_path=ooc_words_path, 
-        output_json_path=output_path,
-        augment_func=token_syn
-    ) 
-    print(augmented_sentences)
-
-    ### STEP 2
-    # Run inference to get Chinese translations in generate_predictions.txt
-    """
-    python ft.py \
-        --model_name_or_path ./opus_baseline \
-        --do_predict \
-        --source_lang en \
-        --target_lang zh \
-        --max_source_length 512 \
-        --test_file ./data/augmented.json \
-        --output_dir ./opus_baseline \
-        --per_device_train_batch_size=4 \
-        --per_device_eval_batch_size=4 \
-        --predict_with_generate
-    """
-
-    ### STEP 3: Generate concatenated dataset
-    # train_json_path = os.path.join(DATA_DIR, "train.json")
-    # augment_json_path = os.path.join(DATA_DIR, "parse_tree_augmented.json")
-    # translations_txt_path = os.path.join(OUTPUT_DIR, "generated_predictions.txt")
-    # concatenated_train_json_path = os.path.join(DATA_DIR, "parse_tree_augmented_train.json")
-
-    # augmented_dataset = augment_training_data(
-    #     train_json_path=train_json_path,
-    #     augment_json_path=augment_json_path,
-    #     translations_txt_path=translations_txt_path,
-    #     concatenated_train_json_path=concatenated_train_json_path
-    # )
-    # print(augmented_dataset)
-
-    ### STEP 4
-    # Run model with augmented data
-    """
-    python ft.py \
-        --model_name_or_path Helsinki-NLP/opus-mt-en-zh \
-        --do_train \
-        --do_eval \
-        --do_predict \
-        --source_lang en \
-        --target_lang zh \
-        --max_source_length 512 \
-        --num_train_epochs 3 \
-        --save_total_limit 2 \
-        --eval_steps 5000 \
-        --logging_steps 5000 \
-        --save_steps 5000 \
-        --evaluation_strategy steps \
-        --train_file ./data/augmented_train.json \
-        --test_file ./data/test.json \
-        --validation_file ./data/validation.json \
-        --output_dir ./const-sub-20k-min-3-words \
-        --per_device_train_batch_size=4 \
-        --per_device_eval_batch_size=4 \
-        --predict_with_generate
-    """
+        input_json_path=input_json_path,
+        ooc_words_txt_path=ooc_words_txt_path, 
+        output_json_path=output_json_path,
+        augment_func=augment_func
+    )

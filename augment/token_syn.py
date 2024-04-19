@@ -2,9 +2,10 @@ import uuid
 import spacy
 from typing import List, Dict, Set
 from nltk import pos_tag
+from util import chunk_list
 from nltk.corpus import wordnet
 from nltk.tokenize import word_tokenize
-from multiprocessing import Manager
+from multiprocessing import cpu_count, Manager
 from multiprocessing.pool import Pool
 
 def process_batch(
@@ -47,12 +48,10 @@ def synonym_substitution(
     ooc_words: List[str], 
     n_generate: int=20000
 ) -> List[str]:
-    batch_size = len(inputs) // 10
-    input_batches = [inputs[i:i+batch_size] for i in range(0, len(inputs), batch_size)]
-    num_threads = len(input_batches)
+    num_threads = min(10, cpu_count())
+    input_batches = chunk_list(inputs)
     n_generate_per_batch = n_generate // num_threads
 
-    print("batch_size", batch_size)
     print("num_threads", num_threads)
     print("n_generate_per_batch", n_generate_per_batch)
 
